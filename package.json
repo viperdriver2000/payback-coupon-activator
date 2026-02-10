@@ -1,0 +1,13 @@
+{
+  "name": "payback-coupon-activator",
+  "version": "1.0.0",
+  "description": "Automatische PAYBACK Coupon Aktivierung",
+  "main": "payback-coupons.js",
+  "scripts": {
+    "start": "node payback-coupons.js",
+    "login": "LOGIN_MODE=true node payback-coupons.js"
+  },
+  "dependencies": {
+    "puppeteer": "^22.0.0"
+  }
+}
