@@ -1,0 +1,27 @@
+# Session Cookies (NIEMALS committen!)
+cookies.json
+
+# Node.js
+node_modules/
+npm-debug.log*
+package-lock.json
+
+# Logs
+*.log
+logs/
+
+# Debug-Dateien
+debug.js
+debug-screenshot.png
+
+# OS-Dateien
+.DS_Store
+Thumbs.db
+*Zone.Identifier
+
+# IDE
+.vscode/
+.idea/
+
+# Docker Volume Daten
+data/
