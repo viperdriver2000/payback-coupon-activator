@@ -2,23 +2,24 @@
 
 Automatische Aktivierung aller verfügbaren PAYBACK Coupons per Docker Container.
 
-Läuft als Cronjob im Hintergrund und aktiviert täglich alle neuen Coupons über einen headless Chromium Browser mit Puppeteer. Integriertes noVNC-Display für manuellen Login und Debugging.
+Läuft als Cronjob im Hintergrund und aktiviert täglich alle neuen Coupons über einen headless Chromium Browser mit Puppeteer. Integriertes noVNC-Display für manuellen Login und Debugging. Telegram-Benachrichtigungen über Ergebnisse und Fehler.
 
 ## Features
 
 - Automatische Aktivierung aller verfügbaren Coupons inkl. Pagination
 - Läuft headless als Docker Container
 - **noVNC Web-Display** (Port 6081) für Login und Debugging
+- **Telegram-Benachrichtigungen** (Ergebnisse, Session-Ablauf, Fehler)
 - Konfigurierbarer Cronjob-Zeitplan
 - Cookie-basiertes Login (einmalig manuell via noVNC, dann automatisch)
 - Session wird nach jedem Durchlauf automatisch verlängert
 - Tägliche Log-Dateien zur Nachverfolgung
-- Ressourcen-Limits für den Container
 
 ## Voraussetzungen
 
 - Docker & Docker Compose
 - PAYBACK Account
+- Optional: Telegram Bot (für Benachrichtigungen)
 
 ## Setup
 
@@ -39,9 +40,18 @@ services:
     environment:
       - PAYBACK_USERNAME=deine@email.de
       - PAYBACK_PASSWORD=deinPasswort
+      # Optional: Telegram-Benachrichtigungen
+      - TELEGRAM_BOT_TOKEN=1234567890:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+      - TELEGRAM_CHAT_ID=-1234567890
 ```
 
 Diese Datei ist in `.gitignore` eingetragen und wird nicht committet.
+
+**Telegram Bot erstellen:**
+1. In Telegram mit [@BotFather](https://t.me/BotFather) chatten
+2. `/newbot` senden und den Anweisungen folgen
+3. Bot-Token kopieren → `TELEGRAM_BOT_TOKEN`
+4. Chat-ID ermitteln: Bot zur Gruppe hinzufügen, Nachricht senden, dann `https://api.telegram.org/bot<TOKEN>/getUpdates` aufrufen → `TELEGRAM_CHAT_ID`
 
 ### 3. Image bauen und starten
 
@@ -116,7 +126,7 @@ docker compose logs -f payback
 
 ### Session erneuern (wenn abgelaufen)
 
-Wenn im Log "Session abgelaufen" erscheint, muss man sich erneut einloggen:
+Wenn im Log oder via Telegram "Session abgelaufen" erscheint, muss man sich erneut einloggen:
 
 ```bash
 # 1. Browser auf dem noVNC-Display öffnen
@@ -167,7 +177,7 @@ docker ps --filter name=payback-coupons
 
 ## Konfiguration
 
-Einstellungen über Umgebungsvariablen in `docker-compose.yml`:
+Einstellungen über Umgebungsvariablen in `docker-compose.yml` bzw. `docker-compose.override.yml`:
 
 | Variable | Standard | Beschreibung |
 |---|---|---|
@@ -175,6 +185,22 @@ Einstellungen über Umgebungsvariablen in `docker-compose.yml`:
 | `RUN_ON_START` | `false` | Beim Container-Start direkt einmal ausführen |
 | `HEADLESS` | `true` | Browser ohne GUI (für Cronjob) |
 | `LOGIN_MODE` | `false` | Login-Modus: öffnet Browser auf noVNC-Display |
+| `PAYBACK_USERNAME` | – | PAYBACK E-Mail (in override.yml) |
+| `PAYBACK_PASSWORD` | – | PAYBACK Passwort (in override.yml) |
+| `TELEGRAM_BOT_TOKEN` | – | Telegram Bot Token (optional) |
+| `TELEGRAM_CHAT_ID` | – | Telegram Chat-ID (optional) |
+
+### Telegram-Benachrichtigungen
+
+Wenn `TELEGRAM_BOT_TOKEN` und `TELEGRAM_CHAT_ID` gesetzt sind, sendet der Container folgende Nachrichten:
+
+| Ereignis | Nachricht |
+|---|---|
+| Coupons aktiviert | 🎟 **X neue Coupons aktiviert** |
+| Keine neuen Coupons | ✅ Alle bereits aktiviert |
+| Session abgelaufen | 🔑 Bitte erneut einloggen (mit noVNC-Link) |
+| Keine Cookies | ⚠️ Bitte erstmalig einloggen (mit noVNC-Link) |
+| Fehler | ❌ Fehlermeldung |
 
 ### Cron-Zeitplan Beispiele
 
@@ -189,9 +215,9 @@ Einstellungen über Umgebungsvariablen in `docker-compose.yml`:
 ```
 .
 ├── docker-compose.yml          # Container-Konfiguration
-├── docker-compose.override.yml # Credentials (nicht im Repo)
+├── docker-compose.override.yml # Credentials + Telegram (nicht im Repo)
 ├── Dockerfile                  # Image: Node.js + Chromium + noVNC
-├── payback-coupons.js          # Hauptscript (Login + Coupon-Aktivierung)
+├── payback-coupons.js          # Hauptscript (Login + Coupon-Aktivierung + Telegram)
 ├── entrypoint.sh               # Entrypoint (Display-Stack + Cron)
 ├── run-coupons.sh              # Wrapper für den Cronjob
 ├── package.json                # Node.js Dependencies
@@ -215,7 +241,7 @@ Der Container enthält einen vollständigen Display-Stack für noVNC:
 → Erstmaliger Login wurde noch nicht durchgeführt. Siehe Setup Schritt 4.
 
 **"Session abgelaufen"**
-→ Cookies sind nicht mehr gültig. Erneut via noVNC einloggen (siehe "Session erneuern").
+→ Cookies sind nicht mehr gültig. Erneut via noVNC einloggen (siehe "Session erneuern"). Du wirst auch via Telegram benachrichtigt.
 
 **"0 Coupons aktiviert"**
 → Alle Coupons waren bereits aktiviert. Normal wenn keine neuen Coupons seit dem letzten Lauf.
@@ -229,8 +255,8 @@ Der Container enthält einen vollständigen Display-Stack für noVNC:
 docker exec -d payback-coupons bash -c 'DISPLAY=:99 chromium --no-sandbox --disable-gpu https://www.payback.de'
 ```
 
-**noVNC: "Connect" Button reagiert nicht**
-→ Container ggf. neu starten: `docker compose restart`
+**Keine Telegram-Nachrichten**
+→ `TELEGRAM_BOT_TOKEN` und `TELEGRAM_CHAT_ID` in `docker-compose.override.yml` prüfen. Bot muss Mitglied der Gruppe/des Chats sein.
 
 ## Bookmarklet
 
