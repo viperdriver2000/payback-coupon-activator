@@ -5,12 +5,7 @@ const path = require("path");
 // ============================================================
 // PAYBACK Coupon Aktivierung - Docker Edition
 // ============================================================
-// Beim ersten Start: LOGIN_MODE=true → Browser öffnet sich,
-// du loggst dich manuell ein, Cookies werden gespeichert.
-// Danach läuft alles automatisch per Cronjob.
-// ============================================================
 
-// Helper: Warten (ersetzt das entfernte page.waitForTimeout)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const COOKIES_PATH = "/data/cookies.json";
@@ -20,18 +15,45 @@ const LOGIN_URL = "https://www.payback.de/login";
 const LOGIN_MODE = process.env.LOGIN_MODE === "true";
 const HEADLESS = process.env.HEADLESS !== "false";
 
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
 // Logging
 function log(msg) {
   const timestamp = new Date().toISOString();
   const line = `[${timestamp}] ${msg}`;
   console.log(line);
 
-  // Log-Datei schreiben
   if (!fs.existsSync(LOG_PATH)) {
     fs.mkdirSync(LOG_PATH, { recursive: true });
   }
   const logFile = path.join(LOG_PATH, `payback-${new Date().toISOString().slice(0, 10)}.log`);
   fs.appendFileSync(logFile, line + "\n");
+}
+
+// Telegram-Nachricht senden
+async function sendTelegram(message) {
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+    log("Telegram nicht konfiguriert, ueberspringe Benachrichtigung");
+    return;
+  }
+  try {
+    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        chat_id: TELEGRAM_CHAT_ID,
+        text: message,
+        parse_mode: "HTML",
+      }),
+    });
+    if (!res.ok) {
+      log("Telegram-Fehler: " + res.status + " " + (await res.text()));
+    }
+  } catch (e) {
+    log("Telegram-Fehler: " + e.message);
+  }
 }
 
 // Cookies laden
@@ -61,11 +83,9 @@ async function saveCookies(page) {
 // Prüfen ob eingeloggt
 async function isLoggedIn(page) {
   try {
-    // Auf der Coupon-Seite prüfen ob wir weitergeleitet werden
     await page.goto(COUPON_URL, { waitUntil: "networkidle2", timeout: 30000 });
     await sleep(3000);
     const url = page.url();
-    // Wenn wir auf Login umgeleitet werden, sind wir nicht eingeloggt
     if (url.includes("/login")) {
       return false;
     }
@@ -77,7 +97,7 @@ async function isLoggedIn(page) {
 }
 
 // ============================================================
-// LOGIN MODUS - Einmalig manuell einloggen
+// LOGIN MODUS
 // ============================================================
 async function runLoginMode() {
   log("=== LOGIN MODUS ===");
@@ -97,7 +117,6 @@ async function runLoginMode() {
   const page = await browser.newPage();
   await page.setViewport({ width: 1280, height: 900 });
 
-  // Bestehende Cookies laden falls vorhanden
   const existingCookies = loadCookies();
   if (existingCookies) {
     await page.setCookie(...existingCookies);
@@ -107,16 +126,12 @@ async function runLoginMode() {
   await page.goto(LOGIN_URL, { waitUntil: "networkidle2" });
 
   log("Warte auf manuellen Login... (Seite wird überwacht)");
-  log("Sobald du auf der Coupon-Seite oder der Startseite landest, werden die Cookies gespeichert.");
 
-  // Warten bis der User eingeloggt ist
-  // Wir prüfen alle 3 Sekunden ob die URL sich geändert hat
   let loggedIn = false;
   while (!loggedIn) {
     await sleep(3000);
     const url = page.url();
     if (!url.includes("/login") && url.includes("payback.de")) {
-      // Nochmal kurz warten damit alle Cookies gesetzt sind
       await sleep(5000);
       loggedIn = true;
     }
@@ -124,10 +139,8 @@ async function runLoginMode() {
 
   await saveCookies(page);
   log("Login erfolgreich! Cookies wurden gespeichert.");
-  log("Du kannst den Container jetzt mit Ctrl+C beenden.");
-  log("Starte danach den Container im normalen Modus (ohne LOGIN_MODE).");
+  await sendTelegram("✅ <b>PAYBACK Login erfolgreich</b>\nCookies wurden gespeichert.");
 
-  // Browser offen lassen damit der User es sieht
   await sleep(10000);
   await browser.close();
 }
@@ -140,7 +153,8 @@ async function activateCoupons() {
 
   const cookies = loadCookies();
   if (!cookies) {
-    log("FEHLER: Keine Cookies gefunden! Bitte zuerst LOGIN_MODE=true ausführen.");
+    log("FEHLER: Keine Cookies gefunden!");
+    await sendTelegram("⚠️ <b>PAYBACK Fehler</b>\nKeine Cookies gefunden. Bitte einloggen!\n\n👉 noVNC: http://192.168.84.56:6081/vnc.html");
     process.exit(1);
   }
 
@@ -159,27 +173,24 @@ async function activateCoupons() {
   try {
     const page = await browser.newPage();
 
-    // User-Agent setzen damit es nicht wie ein Bot aussieht
     await page.setUserAgent(
       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     );
     await page.setViewport({ width: 1280, height: 900 });
 
-    // Cookies setzen
     await page.setCookie(...cookies);
     log("Cookies geladen");
 
-    // Prüfen ob noch eingeloggt
     const loggedIn = await isLoggedIn(page);
     if (!loggedIn) {
-      log("FEHLER: Session abgelaufen! Bitte erneut LOGIN_MODE=true ausführen.");
+      log("FEHLER: Session abgelaufen!");
+      await sendTelegram("🔑 <b>PAYBACK Session abgelaufen!</b>\nBitte erneut einloggen.\n\n👉 noVNC: http://192.168.84.56:6081/vnc.html");
       await browser.close();
       process.exit(2);
     }
 
     log("Login-Status: OK");
 
-    // Zur Coupon-Seite navigieren
     await page.goto(COUPON_URL, { waitUntil: "networkidle2", timeout: 30000 });
     await sleep(5000);
 
@@ -189,7 +200,6 @@ async function activateCoupons() {
     while (true) {
       log("Verarbeite Seite " + pageNum + "...");
 
-      // Coupons über Shadow DOM aktivieren
       const activated = await page.evaluate(async () => {
         let count = 0;
 
@@ -216,7 +226,6 @@ async function activateCoupons() {
       totalActivated += activated;
       log("Seite " + pageNum + ": " + activated + " Coupons aktiviert");
 
-      // Nächste Seite
       const hasNext = await page.evaluate(() => {
         const couponCenter = document.querySelector("pb-coupon-center");
         if (!couponCenter || !couponCenter.shadowRoot) return false;
@@ -237,18 +246,25 @@ async function activateCoupons() {
       if (!hasNext) break;
 
       pageNum++;
-      await sleep(2000); // Warten auf Seitenladung
+      await sleep(2000);
     }
 
-    // Cookies aktualisieren (Session verlängern)
     await saveCookies(page);
 
     log("=== ERGEBNIS ===");
     log("Gesamt: " + totalActivated + " Coupons auf " + pageNum + " Seite(n) aktiviert");
     log("=== FERTIG ===");
+
+    // Telegram-Benachrichtigung
+    if (totalActivated > 0) {
+      await sendTelegram(`🎟 <b>PAYBACK Coupons aktiviert!</b>\n${totalActivated} neue Coupons auf ${pageNum} Seite(n) aktiviert.`);
+    } else {
+      await sendTelegram(`✅ <b>PAYBACK Check</b>\nKeine neuen Coupons. Alle bereits aktiviert.`);
+    }
   } catch (e) {
     log("FEHLER: " + e.message);
     log(e.stack);
+    await sendTelegram(`❌ <b>PAYBACK Fehler</b>\n<code>${e.message}</code>`);
   } finally {
     await browser.close();
   }
@@ -266,6 +282,7 @@ async function activateCoupons() {
     }
   } catch (e) {
     log("Kritischer Fehler: " + e.message);
+    await sendTelegram(`❌ <b>PAYBACK Kritischer Fehler</b>\n<code>${e.message}</code>`);
     process.exit(1);
   }
 })();
