@@ -50,43 +50,106 @@ docker compose build
 docker compose up -d
 ```
 
-### 4. Einmalig manuell einloggen
+### 4. Erstmalig einloggen (via noVNC)
 
-PAYBACK nutzt ein Captcha beim Login, daher muss der erste Login manuell erfolgen.
+PAYBACK nutzt ein Captcha beim Login, daher muss der erste Login manuell über das noVNC-Display erfolgen. Die Session-Cookies werden gespeichert und für alle weiteren automatischen Durchläufe wiederverwendet.
 
-1. Container im Login-Modus starten:
-   ```bash
-   docker compose run --rm -e LOGIN_MODE=true -p 6081:6081 payback
-   ```
-2. noVNC im Browser öffnen: `http://<server-ip>:6081/vnc.html`
-3. Im Browser-Fenster bei PAYBACK einloggen
-4. Cookies werden automatisch gespeichert
-5. Container mit Ctrl+C beenden, danach normal starten:
-   ```bash
-   docker compose up -d
-   ```
+**Variante A – Login-Modus (empfohlen für Ersteinrichtung):**
 
-Im normalen Betrieb läuft noVNC auf Port 6081 dauerhaft mit. Das ist nützlich um den Status zu prüfen oder bei Session-Ablauf erneut einzuloggen.
+```bash
+# Container im Login-Modus starten (öffnet automatisch einen Browser)
+docker compose run --rm -e LOGIN_MODE=true -p 6081:6081 payback
+```
 
-## Konfiguration
+Dann im eigenen Browser öffnen: `http://<server-ip>:6081/vnc.html`
 
-Einstellungen über Umgebungsvariablen in `docker-compose.yml`:
+Im noVNC-Fenster erscheint ein Chromium-Browser mit der PAYBACK-Login-Seite. Dort einloggen – die Cookies werden automatisch gespeichert sobald der Login abgeschlossen ist. Danach den Container mit Ctrl+C beenden und normal starten:
 
-| Variable | Standard | Beschreibung |
-|---|---|---|
-| `CRON_SCHEDULE` | `0 8 * * *` | Cronjob-Zeitplan |
-| `RUN_ON_START` | `false` | Beim Container-Start direkt ausführen |
-| `HEADLESS` | `true` | Browser ohne GUI |
+```bash
+docker compose up -d
+```
 
-### Cron-Zeitplan Beispiele
+**Variante B – Browser manuell auf dem laufenden Container öffnen:**
 
-| Zeitplan | Beschreibung |
-|---|---|
-| `0 8 * * *` | Täglich um 08:00 Uhr |
-| `0 */12 * * *` | Alle 12 Stunden |
-| `0 8,20 * * *` | Täglich um 08:00 und 20:00 Uhr |
+Der Container hat im Normalbetrieb ein noVNC-Display auf Port 6081 das dauerhaft läuft. Man kann jederzeit einen Browser darauf öffnen:
 
-## Verwendung
+```bash
+# Chromium auf dem noVNC-Display öffnen
+docker exec -d payback-coupons bash -c 'DISPLAY=:99 chromium --no-sandbox --disable-gpu https://www.payback.de/login'
+```
+
+Dann im eigenen Browser `http://<server-ip>:6081/vnc.html` öffnen und im Chromium-Fenster einloggen.
+
+Nach dem Login die Cookies speichern:
+
+```bash
+# Coupon-Script manuell ausführen (speichert dabei die aktuellen Cookies)
+docker exec payback-coupons bash /app/run-coupons.sh
+```
+
+Chromium auf dem Display danach schließen:
+
+```bash
+docker exec payback-coupons pkill -f chromium
+```
+
+## Manuelle Bedienung
+
+### Coupons sofort aktivieren
+
+```bash
+docker exec payback-coupons bash /app/run-coupons.sh
+```
+
+### Logs prüfen
+
+```bash
+# Cron-Log (alle Läufe)
+docker exec payback-coupons cat /data/logs/cron.log
+
+# Tages-Log (Detail)
+docker exec payback-coupons cat /data/logs/payback-$(date +%Y-%m-%d).log
+
+# Live-Logs des Containers
+docker compose logs -f payback
+```
+
+### Session erneuern (wenn abgelaufen)
+
+Wenn im Log "Session abgelaufen" erscheint, muss man sich erneut einloggen:
+
+```bash
+# 1. Browser auf dem noVNC-Display öffnen
+docker exec -d payback-coupons bash -c 'DISPLAY=:99 chromium --no-sandbox --disable-gpu https://www.payback.de/login'
+
+# 2. Im eigenen Browser noVNC öffnen und bei PAYBACK einloggen:
+#    http://<server-ip>:6081/vnc.html
+
+# 3. Nach dem Login Cookies speichern
+docker exec payback-coupons bash /app/run-coupons.sh
+
+# 4. Browser auf dem Display schließen
+docker exec payback-coupons pkill -f chromium
+```
+
+### noVNC (Remote-Desktop)
+
+Der Container hat ein eingebautes Web-Display. Damit kann man jederzeit in den Container schauen:
+
+```bash
+# noVNC im Browser öffnen:
+# http://<server-ip>:6081/vnc.html
+
+# Chromium auf dem Display starten (z.B. für Debugging):
+docker exec -d payback-coupons bash -c 'DISPLAY=:99 chromium --no-sandbox --disable-gpu https://www.payback.de/coupons'
+
+# Chromium wieder schließen:
+docker exec payback-coupons pkill -f chromium
+```
+
+Beim Verbinden auf "Connect" klicken (kein Passwort nötig). Im Normalbetrieb ist der Desktop leer – Chromium läuft headless im Hintergrund.
+
+### Container-Verwaltung
 
 ```bash
 # Container starten
@@ -95,21 +158,31 @@ docker compose up -d
 # Container stoppen
 docker compose down
 
-# Logs anzeigen (live)
-docker compose logs -f payback
+# Container neu bauen (nach Code-Änderungen)
+docker compose build && docker compose up -d
 
-# Manuell ausführen
-docker exec payback-coupons /app/run-coupons.sh
-
-# Tages-Log anzeigen
-docker exec payback-coupons cat /data/logs/payback-2026-02-13.log
-
-# Cron-Log
-docker exec payback-coupons cat /data/logs/cron.log
-
-# noVNC öffnen (Browser)
-# http://<server-ip>:6081/vnc.html
+# Container-Status prüfen
+docker ps --filter name=payback-coupons
 ```
+
+## Konfiguration
+
+Einstellungen über Umgebungsvariablen in `docker-compose.yml`:
+
+| Variable | Standard | Beschreibung |
+|---|---|---|
+| `CRON_SCHEDULE` | `0 8 * * *` | Cronjob-Zeitplan (Cron-Syntax) |
+| `RUN_ON_START` | `false` | Beim Container-Start direkt einmal ausführen |
+| `HEADLESS` | `true` | Browser ohne GUI (für Cronjob) |
+| `LOGIN_MODE` | `false` | Login-Modus: öffnet Browser auf noVNC-Display |
+
+### Cron-Zeitplan Beispiele
+
+| Zeitplan | Beschreibung |
+|---|---|
+| `0 8 * * *` | Täglich um 08:00 Uhr |
+| `0 */12 * * *` | Alle 12 Stunden |
+| `0 8,20 * * *` | Täglich um 08:00 und 20:00 Uhr |
 
 ## Projektstruktur
 
@@ -127,7 +200,7 @@ docker exec payback-coupons cat /data/logs/cron.log
 
 ## Display-Stack
 
-Der Container enthält einen vollständigen Display-Stack:
+Der Container enthält einen vollständigen Display-Stack für noVNC:
 
 | Komponente | Funktion |
 |---|---|
@@ -139,10 +212,10 @@ Der Container enthält einen vollständigen Display-Stack:
 ## Troubleshooting
 
 **"Keine Cookies gefunden"**
-→ Login-Schritt (Schritt 4) wurde noch nicht durchgeführt.
+→ Erstmaliger Login wurde noch nicht durchgeführt. Siehe Setup Schritt 4.
 
 **"Session abgelaufen"**
-→ Cookies sind nicht mehr gültig. Erneut via noVNC einloggen oder Login-Modus starten.
+→ Cookies sind nicht mehr gültig. Erneut via noVNC einloggen (siehe "Session erneuern").
 
 **"0 Coupons aktiviert"**
 → Alle Coupons waren bereits aktiviert. Normal wenn keine neuen Coupons seit dem letzten Lauf.
@@ -151,11 +224,17 @@ Der Container enthält einen vollständigen Display-Stack:
 → PATH fehlt in der Cron-Konfiguration. Aktuelle Version des Entrypoints verwenden.
 
 **noVNC zeigt leeren Desktop**
-→ Normal im Automatik-Modus. Der Browser läuft headless. Im Login-Modus öffnet sich ein Chromium-Fenster.
+→ Normal im Automatik-Modus. Chromium läuft headless. Browser manuell starten zum Interagieren:
+```bash
+docker exec -d payback-coupons bash -c 'DISPLAY=:99 chromium --no-sandbox --disable-gpu https://www.payback.de'
+```
+
+**noVNC: "Connect" Button reagiert nicht**
+→ Container ggf. neu starten: `docker compose restart`
 
 ## Bookmarklet
 
-Alternativ kann dieses Bookmarklet im Browser alle Coupons manuell aktivieren:
+Alternativ kann dieses Bookmarklet im eigenen Browser alle Coupons manuell aktivieren (dazu auf `https://www.payback.de/coupons` eingeloggt sein):
 
 ```javascript
 javascript:(async () => {
