@@ -4,16 +4,13 @@ services:
     container_name: payback-coupons
     restart: unless-stopped
     volumes:
-      # Persistente Daten (Cookies + Logs)
       - payback-data:/data
+    ports:
+      - "6081:6081"
     environment:
-      # Cronjob-Zeitplan (Standard: täglich um 8:00 Uhr)
       - CRON_SCHEDULE=0 8 * * *
-      # Beim Container-Start direkt einmal ausführen? (true/false)
       - RUN_ON_START=false
-      # Headless-Modus (immer true im Automatik-Betrieb)
       - HEADLESS=true
-    # Ressourcen-Limits (optional aber empfohlen)
     deploy:
       resources:
         limits:

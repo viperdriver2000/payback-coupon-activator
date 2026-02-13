@@ -1,6 +1,6 @@
 FROM node:20-slim
 
-# Chrome Dependencies installieren
+# Chrome + Display-Stack Dependencies
 RUN apt-get update && apt-get install -y \
     chromium \
     cron \
@@ -19,12 +19,19 @@ RUN apt-get update && apt-get install -y \
     libxdamage1 \
     libxrandr2 \
     xdg-utils \
+    xvfb \
+    x11vnc \
+    novnc \
+    websockify \
+    fluxbox \
+    procps \
     --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
-# Puppeteer soll das System-Chromium verwenden (kein eigenes herunterladen)
+# Puppeteer soll das System-Chromium verwenden
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
 ENV PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+ENV DISPLAY=:99
 
 WORKDIR /app
 
@@ -42,5 +49,7 @@ RUN chmod +x run-coupons.sh entrypoint.sh
 RUN mkdir -p /data/logs
 
 VOLUME ["/data"]
+
+EXPOSE 6081
 
 ENTRYPOINT ["/app/entrypoint.sh"]
