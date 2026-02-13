@@ -1,15 +1,16 @@
-# PAYBACK Coupon Activator 🎯
+# PAYBACK Coupon Activator
 
 Automatische Aktivierung aller verfügbaren PAYBACK Coupons per Docker Container.
 
-Läuft als Cronjob im Hintergrund und aktiviert täglich alle neuen Coupons über einen headless Chromium Browser mit Puppeteer.
+Läuft als Cronjob im Hintergrund und aktiviert täglich alle neuen Coupons über einen headless Chromium Browser mit Puppeteer. Integriertes noVNC-Display für manuellen Login und Debugging.
 
 ## Features
 
 - Automatische Aktivierung aller verfügbaren Coupons inkl. Pagination
-- Läuft headless als Docker Container (kein GUI nötig)
+- Läuft headless als Docker Container
+- **noVNC Web-Display** (Port 6081) für Login und Debugging
 - Konfigurierbarer Cronjob-Zeitplan
-- Cookie-basiertes Login (einmalig manuell, dann automatisch)
+- Cookie-basiertes Login (einmalig manuell via noVNC, dann automatisch)
 - Session wird nach jedem Durchlauf automatisch verlängert
 - Tägliche Log-Dateien zur Nachverfolgung
 - Ressourcen-Limits für den Container
@@ -18,7 +19,6 @@ Läuft als Cronjob im Hintergrund und aktiviert täglich alle neuen Coupons übe
 
 - Docker & Docker Compose
 - PAYBACK Account
-- Für den initialen Login: Ein Rechner mit grafischer Oberfläche (Browser)
 
 ## Setup
 
@@ -29,61 +29,48 @@ git clone https://github.com/viperdriver2000/payback-coupon-activator.git
 cd payback-coupon-activator
 ```
 
-### 2. Image bauen
+### 2. Credentials konfigurieren
+
+Erstelle eine `docker-compose.override.yml` mit deinen Zugangsdaten:
+
+```yaml
+services:
+  payback:
+    environment:
+      - PAYBACK_USERNAME=deine@email.de
+      - PAYBACK_PASSWORD=deinPasswort
+```
+
+Diese Datei ist in `.gitignore` eingetragen und wird nicht committet.
+
+### 3. Image bauen und starten
 
 ```bash
 docker compose build
-```
-
-### 3. Einmalig manuell einloggen
-
-PAYBACK nutzt ein Captcha beim Login, daher muss der erste Login manuell in einem Browser erfolgen. Die Session-Cookies werden gespeichert und für alle weiteren automatischen Durchläufe wiederverwendet.
-
-**Option A – Lokaler Rechner mit GUI (empfohlen):**
-
-```bash
-docker compose run --rm \
-  -e LOGIN_MODE=true \
-  -e DISPLAY=$DISPLAY \
-  -v /tmp/.X11-unix:/tmp/.X11-unix \
-  payback
-```
-
-Ein Chromium-Fenster öffnet sich. Bei PAYBACK einloggen – die Cookies werden automatisch gespeichert sobald der Login abgeschlossen ist.
-
-**Option B – Login lokal, Cookies auf Server kopieren:**
-
-Falls der Container auf einem headless Server laufen soll:
-
-1. Login auf dem lokalen Rechner durchführen (Option A)
-2. Cookies aus dem Docker Volume extrahieren:
-   ```bash
-   docker run --rm \
-     -v payback-docker_payback-data:/data \
-     -v $(pwd):/export \
-     alpine cp /data/cookies.json /export/cookies.json
-   ```
-3. Cookies auf den Server kopieren:
-   ```bash
-   scp cookies.json user@server:/tmp/cookies.json
-   ```
-4. Auf dem Server ins Docker Volume legen:
-   ```bash
-   docker volume inspect payback-docker_payback-data  # Mountpoint prüfen
-   cp /tmp/cookies.json /var/lib/docker/volumes/payback-docker_payback-data/_data/cookies.json
-   ```
-
-### 4. Container starten
-
-```bash
 docker compose up -d
 ```
 
-Fertig! Der Container läuft im Hintergrund und aktiviert täglich alle neuen Coupons.
+### 4. Einmalig manuell einloggen
+
+PAYBACK nutzt ein Captcha beim Login, daher muss der erste Login manuell erfolgen.
+
+1. Container im Login-Modus starten:
+   ```bash
+   docker compose run --rm -e LOGIN_MODE=true -p 6081:6081 payback
+   ```
+2. noVNC im Browser öffnen: `http://<server-ip>:6081/vnc.html`
+3. Im Browser-Fenster bei PAYBACK einloggen
+4. Cookies werden automatisch gespeichert
+5. Container mit Ctrl+C beenden, danach normal starten:
+   ```bash
+   docker compose up -d
+   ```
+
+Im normalen Betrieb läuft noVNC auf Port 6081 dauerhaft mit. Das ist nützlich um den Status zu prüfen oder bei Session-Ablauf erneut einzuloggen.
 
 ## Konfiguration
 
-Alle Einstellungen werden über Umgebungsvariablen in der `docker-compose.yml` gesteuert:
+Einstellungen über Umgebungsvariablen in `docker-compose.yml`:
 
 | Variable | Standard | Beschreibung |
 |---|---|---|
@@ -98,7 +85,6 @@ Alle Einstellungen werden über Umgebungsvariablen in der `docker-compose.yml` g
 | `0 8 * * *` | Täglich um 08:00 Uhr |
 | `0 */12 * * *` | Alle 12 Stunden |
 | `0 8,20 * * *` | Täglich um 08:00 und 20:00 Uhr |
-| `30 7 * * 1` | Montags um 07:30 Uhr |
 
 ## Verwendung
 
@@ -113,18 +99,63 @@ docker compose down
 docker compose logs -f payback
 
 # Manuell ausführen
-docker compose run --rm --entrypoint "" payback node /app/payback-coupons.js
+docker exec payback-coupons /app/run-coupons.sh
 
-# Detaillierte Logs eines bestimmten Tages
-docker compose exec payback cat /data/logs/payback-2025-02-10.log
+# Tages-Log anzeigen
+docker exec payback-coupons cat /data/logs/payback-2026-02-13.log
 
 # Cron-Log
-docker compose exec payback cat /data/logs/cron.log
+docker exec payback-coupons cat /data/logs/cron.log
+
+# noVNC öffnen (Browser)
+# http://<server-ip>:6081/vnc.html
 ```
+
+## Projektstruktur
+
+```
+.
+├── docker-compose.yml          # Container-Konfiguration
+├── docker-compose.override.yml # Credentials (nicht im Repo)
+├── Dockerfile                  # Image: Node.js + Chromium + noVNC
+├── payback-coupons.js          # Hauptscript (Login + Coupon-Aktivierung)
+├── entrypoint.sh               # Entrypoint (Display-Stack + Cron)
+├── run-coupons.sh              # Wrapper für den Cronjob
+├── package.json                # Node.js Dependencies
+└── .gitignore
+```
+
+## Display-Stack
+
+Der Container enthält einen vollständigen Display-Stack:
+
+| Komponente | Funktion |
+|---|---|
+| Xvfb | Virtuelles Display (:99) |
+| Fluxbox | Leichtgewichtiger Window Manager |
+| x11vnc | VNC-Server (Port 5900 intern) |
+| noVNC/websockify | Web-VNC-Client (Port 6081) |
+
+## Troubleshooting
+
+**"Keine Cookies gefunden"**
+→ Login-Schritt (Schritt 4) wurde noch nicht durchgeführt.
+
+**"Session abgelaufen"**
+→ Cookies sind nicht mehr gültig. Erneut via noVNC einloggen oder Login-Modus starten.
+
+**"0 Coupons aktiviert"**
+→ Alle Coupons waren bereits aktiviert. Normal wenn keine neuen Coupons seit dem letzten Lauf.
+
+**"node: command not found" im Cron-Log**
+→ PATH fehlt in der Cron-Konfiguration. Aktuelle Version des Entrypoints verwenden.
+
+**noVNC zeigt leeren Desktop**
+→ Normal im Automatik-Modus. Der Browser läuft headless. Im Login-Modus öffnet sich ein Chromium-Fenster.
 
 ## Bookmarklet
 
-Alternativ zur Docker-Lösung kann das folgende Bookmarklet im Browser verwendet werden, um alle Coupons manuell zu aktivieren. Einfach ein neues Lesezeichen anlegen und folgenden Code als URL einfügen:
+Alternativ kann dieses Bookmarklet im Browser alle Coupons manuell aktivieren:
 
 ```javascript
 javascript:(async () => {
@@ -132,7 +163,6 @@ javascript:(async () => {
     if (!location.href.startsWith(url)) { location.href = url; return; }
     let totalActivated = 0, pageNum = 1;
     while (true) {
-        console.log("Verarbeite Seite " + pageNum + "...");
         const cc = document.querySelector("pb-coupon-center");
         if (!cc?.shadowRoot) break;
         const coupons = cc.shadowRoot.querySelectorAll("pbc-coupon");
@@ -143,7 +173,6 @@ javascript:(async () => {
             if (btn) { btn.click(); activated++; await new Promise(r => setTimeout(r, 150)); }
         }
         totalActivated += activated;
-        console.log("Seite " + pageNum + ": " + activated + " Coupons aktiviert");
         const pagination = cc.shadowRoot.querySelector("pbc-pagination");
         const nextBtn = pagination?.shadowRoot
             ?.querySelector('[data-test="next-page"]:not([disabled])');
@@ -154,46 +183,6 @@ javascript:(async () => {
     alert("Fertig! " + totalActivated + " Coupons auf " + pageNum + " Seite(n) aktiviert.");
 })();
 ```
-
-Dazu auf `https://www.payback.de/coupons` navigieren, einloggen und das Bookmarklet klicken.
-
-## Projektstruktur
-
-```
-.
-├── docker-compose.yml      # Container-Konfiguration
-├── Dockerfile              # Image mit Node.js + Chromium
-├── payback-coupons.js      # Hauptscript (Login + Coupon-Aktivierung)
-├── entrypoint.sh           # Container-Entrypoint (Cron-Setup)
-├── run-coupons.sh          # Wrapper für den Cronjob
-├── package.json            # Node.js Dependencies
-├── .gitignore              # Schützt sensible Dateien
-└── README.md
-```
-
-## Troubleshooting
-
-**"Keine Cookies gefunden"**
-→ Login-Schritt (Schritt 3) wurde noch nicht durchgeführt.
-
-**"Session abgelaufen"**
-→ Cookies sind nicht mehr gültig. Login-Schritt wiederholen.
-
-**"0 Coupons aktiviert"**
-→ Alle Coupons waren bereits aktiviert. Das ist normal wenn das Script täglich läuft und seit dem letzten Durchlauf keine neuen Coupons hinzugekommen sind.
-
-**Container startet nicht**
-→ `docker compose logs payback` für Fehlerdetails prüfen.
-
-**"page.waitForTimeout is not a function"**
-→ Veraltete Version von `payback-coupons.js`. Sicherstellen, dass die aktuelle Version mit der `sleep()` Helper-Funktion verwendet wird.
-
-## Hinweise
-
-- Die PAYBACK-Session läuft nach einiger Zeit ab. Wenn die Logs "Session abgelaufen" melden, muss der Login-Schritt wiederholt werden.
-- Das Script navigiert durch alle Coupon-Seiten (Pagination) und aktiviert auch Coupons auf Folgeseiten.
-- Nach jedem erfolgreichen Durchlauf werden die Cookies aktualisiert, um die Session zu verlängern.
-- Die Selektoren basieren auf der Shadow-DOM-Struktur der PAYBACK-Webseite (Stand: Februar 2026). Bei Änderungen an der Webseite müssen die Selektoren ggf. angepasst werden.
 
 ## Lizenz
 
