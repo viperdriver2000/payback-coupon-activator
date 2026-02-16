@@ -54,11 +54,18 @@ echo "========================================"
 # Logs-Verzeichnis erstellen
 mkdir -p /data/logs
 
-# Cron-Job einrichten (mit PATH fuer node!)
+# Cron-Job einrichten - ALLE Env-Vars durchreichen, da Cron keine Docker-Env erbt
 CRON_SCHEDULE="${CRON_SCHEDULE:-0 8 * * *}"
 {
     echo "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
     echo "DISPLAY=:99"
+    echo "PUPPETEER_EXECUTABLE_PATH=${PUPPETEER_EXECUTABLE_PATH:-/usr/bin/chromium}"
+    echo "PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true"
+    echo "HEADLESS=${HEADLESS:-true}"
+    echo "NODE_ENV=production"
+    # Telegram (optional)
+    [ -n "$TELEGRAM_BOT_TOKEN" ] && echo "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}"
+    [ -n "$TELEGRAM_CHAT_ID" ] && echo "TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID}"
     echo "${CRON_SCHEDULE} /app/run-coupons.sh"
     echo ""
 } > /etc/cron.d/payback-cron
