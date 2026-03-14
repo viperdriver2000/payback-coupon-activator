@@ -194,70 +194,71 @@ async function activateCoupons() {
     await page.goto(COUPON_URL, { waitUntil: "networkidle2", timeout: 30000 });
     await sleep(5000);
 
+    // Neue Payback-Seite: MUI/Next.js, kein Shadow DOM mehr
+    // Buttons haben data-testid="coupon-button-XXXXX-not_activated"
+    const notActivatedSelector = 'button[data-testid$="not_activated"]';
+
+    const totalAvailable = await page.$$eval(notActivatedSelector, (btns) => btns.length);
+    log(`${totalAvailable} nicht-aktivierte Coupons gefunden`);
+
+    if (totalAvailable === 0) {
+      log("Keine neuen Coupons zum Aktivieren.");
+      await saveCookies(page);
+      await sendTelegram(`✅ <b>PAYBACK Check</b>\nKeine neuen Coupons. Alle bereits aktiviert.`);
+      await browser.close();
+      return;
+    }
+
     let totalActivated = 0;
-    let pageNum = 1;
+    let consecutiveErrors = 0;
 
+    // Coupons per page.evaluate klicken (DOM-stabil)
     while (true) {
-      log("Verarbeite Seite " + pageNum + "...");
+      const remaining = await page.evaluate((sel) => {
+        const btns = document.querySelectorAll(sel);
+        return btns.length;
+      }, notActivatedSelector);
 
-      const activated = await page.evaluate(async () => {
-        let count = 0;
+      if (remaining === 0) break;
 
-        const couponCenter = document.querySelector("pb-coupon-center");
-        if (!couponCenter || !couponCenter.shadowRoot) return count;
+      // Ersten Button per evaluate klicken (vermeidet detached node)
+      const clicked = await page.evaluate((sel) => {
+        const btn = document.querySelector(sel);
+        if (!btn) return false;
+        btn.scrollIntoView({ block: "center" });
+        btn.click();
+        return true;
+      }, notActivatedSelector);
 
-        const coupons = couponCenter.shadowRoot.querySelectorAll("pbc-coupon");
+      if (clicked) {
+        totalActivated++;
+        consecutiveErrors = 0;
 
-        for (const c of coupons) {
-          const btn = c.shadowRoot
-            ?.querySelector("pbc-coupon-call-to-action")
-            ?.shadowRoot?.querySelector(".not-activated");
-
-          if (btn) {
-            btn.click();
-            count++;
-            await new Promise((r) => setTimeout(r, 200));
-          }
+        if (totalActivated % 20 === 0) {
+          log(`${totalActivated}/${totalAvailable} aktiviert...`);
         }
 
-        return count;
-      });
-
-      totalActivated += activated;
-      log("Seite " + pageNum + ": " + activated + " Coupons aktiviert");
-
-      const hasNext = await page.evaluate(() => {
-        const couponCenter = document.querySelector("pb-coupon-center");
-        if (!couponCenter || !couponCenter.shadowRoot) return false;
-
-        const pagination = couponCenter.shadowRoot.querySelector("pbc-pagination");
-        if (!pagination || !pagination.shadowRoot) return false;
-
-        const nextBtn = pagination.shadowRoot.querySelector(
-          '[data-test="next-page"]:not([disabled])'
-        );
-        if (nextBtn) {
-          nextBtn.click();
-          return true;
+        // Warten bis DOM sich stabilisiert hat (React re-render)
+        await sleep(800);
+      } else {
+        consecutiveErrors++;
+        if (consecutiveErrors > 5) {
+          log("Keine Buttons mehr klickbar, breche ab.");
+          break;
         }
-        return false;
-      });
-
-      if (!hasNext) break;
-
-      pageNum++;
-      await sleep(2000);
+        await sleep(1000);
+      }
     }
 
     await saveCookies(page);
 
     log("=== ERGEBNIS ===");
-    log("Gesamt: " + totalActivated + " Coupons auf " + pageNum + " Seite(n) aktiviert");
+    log(`Gesamt: ${totalActivated} von ${totalAvailable} Coupons aktiviert`);
     log("=== FERTIG ===");
 
     // Telegram-Benachrichtigung
     if (totalActivated > 0) {
-      await sendTelegram(`🎟 <b>PAYBACK Coupons aktiviert!</b>\n${totalActivated} neue Coupons auf ${pageNum} Seite(n) aktiviert.`);
+      await sendTelegram(`🎟 <b>PAYBACK Coupons aktiviert!</b>\n${totalActivated} von ${totalAvailable} Coupons aktiviert.`);
     } else {
       await sendTelegram(`✅ <b>PAYBACK Check</b>\nKeine neuen Coupons. Alle bereits aktiviert.`);
     }
