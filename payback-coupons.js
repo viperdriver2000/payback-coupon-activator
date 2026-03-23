@@ -102,7 +102,6 @@ async function isLoggedIn(page) {
 async function runLoginMode() {
   log("=== LOGIN MODUS ===");
   log("Browser wird geöffnet. Bitte manuell einloggen!");
-  log("Nach erfolgreichem Login werden die Cookies automatisch gespeichert.");
 
   const browser = await puppeteer.launch({
     headless: false,
@@ -124,8 +123,7 @@ async function runLoginMode() {
   }
 
   await page.goto(LOGIN_URL, { waitUntil: "networkidle2" });
-
-  log("Warte auf manuellen Login... (Seite wird überwacht)");
+  log("Warte auf manuellen Login...");
 
   let loggedIn = false;
   while (!loggedIn) {
@@ -194,73 +192,75 @@ async function activateCoupons() {
     await page.goto(COUPON_URL, { waitUntil: "networkidle2", timeout: 30000 });
     await sleep(5000);
 
-    // Neue Payback-Seite: MUI/Next.js, kein Shadow DOM mehr
-    // Buttons haben data-testid="coupon-button-XXXXX-not_activated"
+    // Alle nicht-aktivierten Coupon-Button-IDs sammeln (einmalig!)
     const notActivatedSelector = 'button[data-testid$="not_activated"]';
 
-    const totalAvailable = await page.$$eval(notActivatedSelector, (btns) => btns.length);
-    log(`${totalAvailable} nicht-aktivierte Coupons gefunden`);
+    const couponIds = await page.$$eval(notActivatedSelector, (btns) =>
+      btns.map((btn) => btn.getAttribute("data-testid"))
+    );
 
-    if (totalAvailable === 0) {
+    log(`${couponIds.length} nicht-aktivierte Coupons gefunden`);
+
+    if (couponIds.length === 0) {
       log("Keine neuen Coupons zum Aktivieren.");
       await saveCookies(page);
-      await sendTelegram(`✅ <b>PAYBACK Check</b>\nKeine neuen Coupons. Alle bereits aktiviert.`);
+      await sendTelegram("✅ <b>PAYBACK Check</b>\nKeine neuen Coupons. Alle bereits aktiviert.");
       await browser.close();
       return;
     }
 
     let totalActivated = 0;
-    let consecutiveErrors = 0;
+    let errors = 0;
 
-    // Coupons per page.evaluate klicken (DOM-stabil)
-    while (true) {
-      const remaining = await page.evaluate((sel) => {
-        const btns = document.querySelectorAll(sel);
-        return btns.length;
-      }, notActivatedSelector);
-
-      if (remaining === 0) break;
-
-      // Ersten Button per evaluate klicken (vermeidet detached node)
-      const clicked = await page.evaluate((sel) => {
-        const btn = document.querySelector(sel);
+    // Jeden Coupon einzeln per seiner eindeutigen data-testid klicken
+    for (const testId of couponIds) {
+      const clicked = await page.evaluate((id) => {
+        const btn = document.querySelector(`button[data-testid="${id}"]`);
         if (!btn) return false;
         btn.scrollIntoView({ block: "center" });
         btn.click();
         return true;
-      }, notActivatedSelector);
+      }, testId);
 
       if (clicked) {
         totalActivated++;
-        consecutiveErrors = 0;
+
+        // Warten bis der Button seinen Status aendert (nicht mehr "not_activated")
+        try {
+          await page.waitForFunction(
+            (id) => !document.querySelector(`button[data-testid="${id}"]`),
+            { timeout: 5000 },
+            testId
+          );
+        } catch {
+          // Timeout ist OK - Button ist vielleicht noch da aber wurde trotzdem aktiviert
+        }
+
+        // Kurze Pause zwischen Klicks
+        await sleep(300);
 
         if (totalActivated % 20 === 0) {
-          log(`${totalActivated}/${totalAvailable} aktiviert...`);
+          log(`${totalActivated}/${couponIds.length} aktiviert...`);
         }
-
-        // Warten bis DOM sich stabilisiert hat (React re-render)
-        await sleep(800);
       } else {
-        consecutiveErrors++;
-        if (consecutiveErrors > 5) {
-          log("Keine Buttons mehr klickbar, breche ab.");
+        errors++;
+        if (errors > 10) {
+          log("Zu viele Fehler, breche ab.");
           break;
         }
-        await sleep(1000);
       }
     }
 
     await saveCookies(page);
 
     log("=== ERGEBNIS ===");
-    log(`Gesamt: ${totalActivated} von ${totalAvailable} Coupons aktiviert`);
+    log(`Gesamt: ${totalActivated} von ${couponIds.length} Coupons aktiviert`);
     log("=== FERTIG ===");
 
-    // Telegram-Benachrichtigung
     if (totalActivated > 0) {
-      await sendTelegram(`🎟 <b>PAYBACK Coupons aktiviert!</b>\n${totalActivated} von ${totalAvailable} Coupons aktiviert.`);
+      await sendTelegram(`🎟 <b>PAYBACK Coupons aktiviert!</b>\n${totalActivated} von ${couponIds.length} Coupons aktiviert.`);
     } else {
-      await sendTelegram(`✅ <b>PAYBACK Check</b>\nKeine neuen Coupons. Alle bereits aktiviert.`);
+      await sendTelegram("✅ <b>PAYBACK Check</b>\nKeine neuen Coupons. Alle bereits aktiviert.");
     }
   } catch (e) {
     log("FEHLER: " + e.message);
